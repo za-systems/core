@@ -1,0 +1,289 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="Cache" version="25">
+<Routine name="ZA" type="INT" languagemode="0"><![CDATA[
+ZA	;ZA Systems Core HTTP SERVER
+	;
+	d Listen^ZA($g(^ZA("CONFIG","PORT"),8000))
+	q
+Listen(tcpport,debug)
+	s debug=$g(debug,0)
+	i $g(tcpport)="" w "*Need Default Port! " q
+	s tcpio="|TCP|"_tcpport
+	o tcpio:(:tcpport:"ACT"):15 e  u 0 w !,"error cannot open port "_tcpport q
+	s ^ZA("STATUS")="RUNNING"
+	u tcpio
+loop
+	i $e(^ZA("STATUS"),1,4)="STOP" c tcpio s ^ZA("STATUS")="STOPPED" q
+	d  g loop
+	. r *x:10  e  q
+	. j child(debug):(:4:tcpio:tcpio):10
+	. i $za\8196#2=1 w *-2
+	. i debug d ShowLogs
+	q
+ShowLogs
+	s a=debug-1 f  s a=$o(^ZA("TEMP","DEBUG",$j,a)) q:a=""  d
+	. u 0 w ^ZA("TEMP","DEBUG",$j,a),!
+	. s debug = a
+	q
+	;
+Log(mio,m) 
+	l ^ZA("TEMP","DEBUG",mio):0 e  q
+	;d pid(mio," "_m)
+	s ^ZA("TEMP","DEBUG",mio,$zts)=m
+	l
+	q
+	;
+child(debug)
+	s pj=$zp
+	i debug d Log(pj,"Spawned child connection "_$j)
+	s %wtcp=$p
+	s httplog=$g(^ZA("LOG"),0)
+	s httplog("dt")=+$h
+	d incrlog
+	n $et s $et="g etsock^ZA"
+next
+	k httpreq,httprsp,ZAERR
+	k ^ZA("TEMP",$j),^ZA("TEMP","ERR",$j)
+wait
+	i $e($g(^ZA("STATUS")),1,4)="STOP" c %wtcp q
+	u %wtcp:(::"CT")
+	r tcpx:10 i '$t g etdc
+	i '$l(tcpx) g etdc
+	i httplog d lograw(tcpx),loghdr(tcpx)
+	i debug d Log(pj,$c(9)_"Recieved:" _tcpx)
+	s httpreq("method")=$p(tcpx," ")
+	s httpreq("path")=$p($p(tcpx," ",2),"?")
+	s httpreq("query")=$p($p(tcpx," ",2),"?",2,999)
+	i $e($p(tcpx," ",3),1,4)'="HTTP" g next
+	f  s tcpx=$$rdcrlf() q:'$l(tcpx)  d addhead(tcpx)
+	i $g(httpreq("header","expect"))="100-continue" d logcn w "HTTP/1.1 100 Continue",$c(13,10,13,10),!
+	u %wtcp:(::"S")
+	i $g(httpreq("header","content-length"))>0 d
+	. d rdlen(httpreq("header","content-length"),99)
+	. i httplog>2 d logbody
+	s $etrap="g etcode^ZA"
+	s ZAERR=0
+	d respond	
+	s $etrap="g etsock^ZA"
+	u %wtcp:(::"S")
+	i $g(ZAERR) d rsperror	
+	i httplog>2 d logrsp
+	d sendata	
+	i $$low^ZAUT($g(httpreq("header","connection")))="close" d  h
+	. k ^ZA("TEMP",$j),^ZA("TEMP","ERR",$j)
+	. c %wtcp
+	. d Log(pj,"Closed Child connection "_$j)
+	d Log(pj,"Nexted Child connection "_$j)
+	g next
+rdcrlf()
+	n x,line,retry
+	s line=""
+	f retry=1:1 r x:1 d:httplog lograw(x) s line=line_x q:$a($zb)=13  q:retry>10
+	q line
+rdchnks
+	q
+rdlen(remain,timeout)
+	n x,line,length
+	s line=0
+rdloop
+	s length=remain i length>$$MaXString() s length=$$MaXString()
+	r x#length:timeout
+	i '$t d:httplog>1 lograw("timeout:"_x) s:'line ^||ZAB=x s:line ^||ZAB(line)=x s line=line+1
+	i httplog>1 d lograw(x)
+	s remain=remain-$l(x),line=line+1,^||ZAB(line)=x
+	g:remain rdloop
+	q
+	;
+addhead(line)
+	d:httplog loghdr(line)
+	n name,value
+	s name=$$low^ZAUT($$ltrim^ZAUT($p(line,":")))
+	s value=$$ltrim^ZAUT($p(line,":",2,99))
+	i line'[":" s name="",value=line
+	i '$l(name) s name=$g(httpreq("header"))
+	i '$l(name) q
+	i $d(httpreq("header",name)) d
+	. s httpreq("header",name)=httpreq("header",name)_","_value
+	e  d
+	. s httpreq("header",name)=value,httpreq("header")=name
+	q
+etsock
+	d logerr
+	c %wtcp
+	h
+etcod
+	s $etrap="g etbail^ZA" i $tlevel trollback
+	l  
+	d logerr
+	d seterror^ZAUT(501,"log id:"_httplog("id"))
+	d rsperror	
+	d debugerror^adsws(httplog("dt"),httplog("id"))
+	d sendata	
+	s $etrap="q:$estack&$quit 0 q:$estack  s $ecode="""" g next"
+	q
+etdc
+	d logdc
+	k ^ZA("TEMP",$j),^ZA("TEMP","ERR",$j)
+	c $p
+	h
+	;
+etbail     ; error trap of error traps
+	u %wtcp
+	w "HTTP/1.1 500 Internal Server Error",$c(13,10),$c(13,10),!
+	k ^ZA("TEMP",$j),^ZA("TEMP","ERR",$j)
+	c %wtcp
+	h
+incrlog   ;
+	n dt,id
+	s dt=httplog("dt")
+	l +^ZA("LOG",dt):2 e  s httplog("id")=$TR($ZTS,",.")  q
+	s id=$g(^ZA("LOG",dt),0)+1
+	s ^ZA("LOG",dt)=id
+	l -^ZA("LOG",dt)
+	s httplog("id")=id
+	q:'httplog
+	s ^ZA("LOG",dt,$j,id)=$$hte^ZAUT($h)_"  $j:"_$j_"  $p:"_%wtcp_"  $stack:"_$stack
+	q
+lograw(x)
+	n dt,id,ln
+	s dt=httplog("dt"),id=httplog("id")
+	s ln=$g(^ZA("LOG",dt,$j,id,"raw"),0)+1
+	s ^ZA("LOG",dt,id,"RAW")=ln
+	s ^ZA("LOG",dt,id,"RAW",ln)=x
+	s ^ZA("LOG",dt,id,"RAW",ln,"zb")=$a($zb)
+	q
+loghdr(x)
+	n dt,id,ln
+	s dt=httplog("dt"),id=httplog("id")
+	s ln=$g(^ZA("LOG",dt,id,"req","HEADER"),0)+1
+	s ^ZA("LOG",dt,id,"REQ","HEADER")=ln
+	s ^ZA("LOG",dt,id,"REQ","HEADER",ln)=x
+	q
+logbody
+	q:'$d(httpreq("body"))
+	n dt,id
+	s dt=httplog("dt"),id=httplog("id")
+	m ^ZA("LOG",dt,id,"REQ","BODY")=^||ZAB
+	q
+logrsp
+	q:'$l($g(httprsp))
+	n dt,id
+	s dt=httplog("dt"),id=httplog("id")
+	i $e(httprsp)="^" m ^ZA("LOG",dt,$j,id,"RES")=@httprsp
+	e  m ^ZA("LOG",dt,id,"RES")=httprsp
+	q
+logcn
+	n dt,id
+	s dt=httplog("dt"),id=httplog("id")
+	s ^ZA("LOG",dt,id,"CONTINUE")="HTTP/1.1 100 Continue"
+	q
+logdc
+	n dt,id
+	s dt=httplog("dt"),id=httplog("id")
+	s ^ZA("LOG",dt,id,"disconnect")=$$hte^ZAUT($h)
+	q
+logerr
+	n %d,%i
+	s %d=httplog("dt"),%i=httplog("id")
+	s ^ZA("LOG",%d,%i,"ERROR")=$zerror_"  ($ecode:"_$ecode_")"
+	n %lvl,%top,%n
+	s %top=$stack(-1),%n=0
+	f %lvl=0:1:%top s %n=%n+1,^ZA("LOG",%d,%i,"ERROR","STACK",%n)=$stack(%lvl,"PLACE")_":"_$stack(%lvl,"MCODE")
+	n %x,%y
+	s %x="^ZA(""LOG"",%d,%i,""ERROR"",""SYSMBOLS"","
+	s %y="%" f  m:$d(@%y) @(%x_"%y)="_%y) s %y=$o(@%y) q:%y=""
+	q
+	;
+respond ;/***********************************************/
+	k ^ZA("TEMP",$j)
+	n routine,location,httpargs,httpbody,ads
+	s routine = ""
+	;d qsplit(.httpargs) i $g(ZAERR) q
+	d match(.routine,.httpargs) i $g(ZAERR) q
+	;d @(routine_"(.httpreq,.httprsp,.httpargs)")
+	q
+qsplit(query) 
+	n i,x,name,value
+	f i=1:1:$l(httpreq("query"),"&") d
+	. s x=$$urldec^ZAUT($p(httpreq("query"),"&",i))
+	. s name=$p(x,"="),value=$p(x,"=",2,999)
+	. i $l(name) s query($$low^ZAUT(name))=value
+	q
+match(routine,args)
+	n path s path=httpreq("path")
+	s ^ahm("routine")=$g(routine)
+	s ^ahm("args")=$g(args)
+	q
+sendata
+	n %wbuff s %wbuff=""
+	n size,rsptype,preamble,start,limit
+	s rsptype=$s($e($g(httprsp))'="^":1,1:2)
+	i rsptype=1 s size=$$varsize^ZAUT(.httprsp)
+	i rsptype=2 s size=$$refsize^ZAUT(.httprsp)
+	d w($$rspline()_$c(13,10))
+	d w("Date: "_$$gmt^ZAUT_$c(13,10))
+	i $d(httpreq("Content-Disposition")) d w("Content-Disposition "_httpreq("Content-Disposition")_$c(13,10))
+	i $d(httpreq("X-Accel-Redirect")) d w("X-Accel-Redirect "_httpreq("X-Accel-Redirect")_$c(13,10))
+	i $d(httpreq("set_cookie")) d w("Set-Cookie: "_httpreq("set_cookie")_$c(13,10))
+	i $d(httpreq("location")) d w("Location: "_httpreq("location")_$c(13,10))
+	i $d(httprsp("auth")) d w("WWW-Authenticate: "_httprsp("auth")_$c(13,10)) k httprsp("auth")
+	i $d(httprsp("mime")) d
+	. d w("Content-Type: "_httprsp("mime")_$c(13,10)) k httprsp("mime")
+	e  d w("Content-Type: application/json; charset=utf-8"_$c(13,10))
+	d w("Content-Length: "_size_$c(13,10)_$c(13,10))
+	i 'size d flush q 
+	n i,j
+	i rsptype=1 d
+	. i $d(httprsp)#2 d w(httprsp)
+	. i $d(httprsp)>1 s i=0 f  s i=$o(httprsp(i)) q:'i  d w(httprsp(i))
+	i rsptype=2 d
+	. i $d(@httprsp)#2 d w(@httprsp)
+	. i $d(@httprsp)>1 s i=0 f  s i=$o(@httprsp@(i)) q:'i  d w(@httprsp@(i))
+	i rsptype=3 d
+	. w preamble
+	. f i=start:1:(start+limit-1) q:'$d(@httprsp@($j,i))  d
+	. . i i>start d w(",")
+	. . s j="" f  s j=$o(@httprsp@($j,i,j)) q:'j  d w(@httprsp@($j,i,j))
+	. d w("]}}")
+	. k @httprsp@($j)
+	d flush
+	q
+w(data)
+	s %wbuff=%wbuff_data
+	i $l(%wbuff)>$$MaXString() d flush
+	q
+flush
+	w %wbuff,!
+	s %wbuff=""
+	q
+rsperror
+	d encode^adsut1("^ZA(""TEMP"",""ZAERR"",$j,1)","^ZA(""TEMP"",""ZAERR"",$j,""JSON"")")
+	s httprsp="^ZA(""TEMP"",""ZAERR"",$j,""JSON"")"
+	k httprsp("pageable")
+	q
+rspline()
+	i '$g(ZAERR),'$d(httpreq("location")) q "HTTP/1.1 200 OK"
+	i '$g(ZAERR),$d(httpreq("location")) q "HTTP/1.1 201 Created"
+	i $g(ZAERR)=400 q "HTTP/1.1 400 Bad Request"
+	i $g(ZAERR)=401 q "HTTP/1.1 401 Unauthorized"
+	i $g(ZAERR)=404 q "HTTP/1.1 404 Not Found"
+	i $g(ZAERR)=405 q "HTTP/1.1 405 Method Not Allowed"
+	i $g(ZAERR)=302 q "HTTP/1.1 405 Method Not Allowed"
+	q "http/1.1 500 internal server error"
+MaXString() q 3000000
+pid(pid,mess) 
+	 n (pid,mess)
+	 s mess=mess_$C(13,10)
+	 s $et="Q" i pid=+$J q
+	 i $p($v(-1,pid),"^",10)]"" q 
+	 s jbstat=$p($v(-1,+pid),"^",16)
+	 i +jbstat\128#2!($p(jbstat,",",2)#2) d  q
+	 . i $zu(94,+pid,mess,2)
+	 q
+	 ;
+OUT
+	Do $system.OBJ.Export("ZA.INT","user\core\routines\ZA.XML")
+	Do $system.OBJ.Export("ZAUT.INT","user\core\routines\ZAUT.XML")
+	Q
+]]></Routine>
+</Export>

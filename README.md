@@ -3,8 +3,7 @@ Web Server and Utils
 
 - Core is the system module
 - Apps will be defined in a separate folder, in core's parent directory
-    - core will contain a config file pointing at default app, location.
-
+    - core will contain a config file pointing at default app location.
         ```
             .zaconfig
             {

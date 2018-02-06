@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="Cache" version="25">
+<Routine name="ZAUT" type="INT" languagemode="0"><![CDATA[
+ZAUT	;ZA Systems Core HTTP SERVER
+	;
+	q
+up(X)    q $tr(X,"abcdefghijklmnopqrstuvwxyz","ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+low(X)   q $tr(X,"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz")
+	;
+ltrim(%x)
+	n %l,%r
+	s %l=1,%r=$l(%x)
+	f %l=1:1:$l(%x) q:$a($e(%x,%l))>32
+	q $e(%x,%l,%r)
+	;
+urlenc(x) q $zconvert(x,"o","url")  
+urldec(x,path) q $zconvert(x,"i","url") 
+	n i,out,frag,asc
+	s:'$g(path) x=$tr(x,"+"," ")
+	f i=1:1:$l(x,"%") d
+	. i i=1 s out=$p(x,"%") q
+	. s frag=$p(x,"%",i),asc=$e(frag,1,2),frag=$e(frag,3,$l(frag))
+	. i $l(asc) s out=out_$c($$hex2dec(asc))
+	. s out=out_frag
+	q out
+refsize(root)
+	q:'$d(root) 0 q:'$l(root) 0
+	n size,i
+	s size=0
+	i $d(@root)#2 s size=$l(@root)
+	i $d(@root)>1 s i=0 f  s i=$o(@root@(i)) q:'i  s size=size+$l(@root@(i))
+	q size
+varsize(v)
+	q:'$d(v) 0
+	n size,i
+	s size=0
+	i $d(v)#2 s size=$l(v)
+	i $d(v)>1 s i="" f  s i=$o(v(i)) q:'i  s size=size+$l(v(i))
+	q size
+seterror(errcode,message) ;
+	n nexterr,errname,topmsg
+	s httperr=400,topmsg="bad request"
+	i errcode=101 s errname="missing name of index"
+	i errcode=102 s errname="invalid index name"
+	i errcode=103 s errname="parameter error"
+	i errcode=104 s httperr=404,topmsg="not found",errname="bad key"
+	i errcode=105 s errname="template required"
+	i errcode=106 s errname="bad filter parameter"
+	i errcode=107 s errname="unsupported field name"
+	i errcode=108 s errname="bad order parameter"
+	i errcode=109 s errname="operation not supported with this index"
+	i errcode=110 s errname="order field unknown"
+	i errcode=111 s errname="unrecognized parameter"
+	i errcode=112 s errname="filter required"
+	i errcode=201 s errname="unknown collection" ; unused?
+	i errcode=202 s errname="unable to decode json"
+	i errcode=203 s httperr=404,topmsg="not found",errname="unable to determine patient"
+	i errcode=204 s httperr=404,topmsg="not found",errname="unable to determine collection" ; unused?
+	i errcode=205 s errname="patient mismatch with object"
+	i errcode=207 s errname="missing uid"
+	i errcode=209 s errname="missing range or index" ; unused?
+	i errcode=210 s errname="unknown uid format"
+	i errcode=211 s httperr=404,topmsg="not found",errname="missing patient identifiers"
+	i errcode=212 s errname="mismatch of patient identifiers"
+	i errcode=213 s errname="delete demographics only not allowed"
+	i errcode=214 s httperr=404,errname="patient id not found in database"
+	i errcode=215 s errname="missing collection name"
+	i errcode=216 s errname="incomplete deletion of collection"
+	i errcode=400 s errname="bad request"
+	i errcode=401 s errname="unauthorized"
+	i errcode=404 s errname="not found"
+	i errcode=405 s errname="method not allowed"
+	i errcode=501 s errname="m execution error"
+	i errcode=502 s errname="unable to lock record"
+	i '$l($g(errname)) s errname="unknown error"
+	i errcode>500 s httperr=500,topmsg="internal server error"
+	i errcode<500,errcode>400 s httperr=errcode,topmsg=errname 
+	s nexterr=$g(^ZA("LOG","HTTPERR",$j,0),0)+1,^ZA("LOG","HTTPERR",$j,0)=nexterr
+	s ^ZA("LOG","HTTPERR",$j,1,"ERROR","CODE")=httperr
+	s ^ZA("LOG","HTTPERR",$j,1,"ERROR","MESSAGE")=topmsg
+	s ^ZA("LOG","HTTPERR",$j,1,"ERROR","REQ")=$g(httpreq("method"))_" "_$g(httpreq("path"))_" "_$g(httpreq("query"))
+	s ^ZA("LOG","HTTPERR",$j,1,"ERROR","ERRORS",nexterr,"REASON")=errcode
+	s ^ZA("LOG","HTTPERR",$j,1,"ERROR","ERRORS",nexterr,"MESSAGE")=errname
+	i $l($g(message)) s ^ZA("LOG","HTTPERR",$j,1,"ERROR","ERRORS",nexterr,"DOMAIN")=message
+	q
+lclhost()
+	i $e($i,1,5)'="|TCP|" q 0
+	n ver,addr
+	s ver=$p($p($zv,") ",2),"(")
+	i ver<2011 s addr=$zu(111,0),addr=$a(addr,1)_"."_$a(addr,2)_"."_$a(addr,3)_"."_$a(addr,4) i 1
+	e  s addr=$system.tcpdevice.peeraddr(0)
+	i addr="127.0.0.1" q 1
+	i addr="0:0:0:0:0:0:0:1" q 1
+	i addr="::1" q 1
+	q 0
+hash(x) 	q $$crc32(x)
+gmt()  
+	n tm,day
+	s tm=$ztimestamp,day=$zdatetime(tm,11)
+	q $p(day," ")_", "_$zdatetime(tm,2)_" GMT"
+sysid()
+	s x=$system_":"_$g(^ZA("CONFIG","PORT"),8000)
+	quit $$crc16hex(x) 
+crc16hex(x)
+	quit $$base($$crc16(x),10,16)
+crc32hex(x)
+	quit $$base($$crc32(x),10,16)
+dec2hex(num)
+	q $$base(num,10,16)
+hex2dec(hex)
+	q $$base(hex,16,10)
+wr4http 
+	o "ZAHTTP.txt":"wns"
+	u "ZAHTTP.txt"
+	q
+rd4http()
+	n x
+	o "ZAHTTP.txt":"rsd"
+	u "ZAHTTP.txt"
+	f  r x:1 s x=$tr(x,$c(13)) q:'$l(x)
+	r x:2
+	d c4http
+	q x
+c4http
+	c "ZAHTTP.txt" u $p
+	q
+crc32(string,seed) ;
+	n i,j,r
+	i '$d(seed) s r=4294967295
+	e  i seed'<0,seed'>4294967295 s r=4294967295-seed
+	e  s $ecode=",M28,"
+	f i=1:1:$l(string) d
+	. s r=$$xor($a(string,i),r,8)
+	. f j=0:1:7 d
+	. . i r#2 s r=$$xor(r\2,3988292384,32)
+	. . e  s r=r\2
+	. . q
+	. q
+	q 4294967295-r
+xor(a,b,w) n i,m,r
+	s r=b,m=1
+	f i=1:1:w d
+	. s:a\m#2 r=r+$s(r\m#2:-m,1:m)
+	. s m=m+m
+	. q
+	q r
+base(%x1,%x2,%x3)
+	i (%x2<2)!(%x2>16)!(%x3<2)!(%x3>16) q -1
+	q $$cnv($$dec(%x1,%x2),%x3)
+dec(n,b)
+	q:b=10 n n i,y s y=0
+	f i=1:1:$l(n) s y=y*b+($f("0123456789ABCDEF",$e(n,i))-2)
+	q y
+cnv(n,b)
+	q:b=10 n n i,y s y=""
+	f i=1:1 s y=$e("0123456789ABCDEF",n#b+1)_y,n=n\b q:n<1
+	q y
+crc16(string,seed) ;
+	n i,j,r
+	i '$d(seed) s r=0
+	e  i seed'<0,seed'>65535 s r=seed\1
+	e  s $ecode=",m28,"
+	f i=1:1:$l(string) d
+	. s r=$$xor($a(string,i),r,8)
+	. f j=0:1:7 d
+	. . i r#2 s r=$$xor(r\2,40961,16)
+	. . e  s r=r\2
+	. . q
+	. q
+	q r
+htfm(%h,%f)
+	n x,%,%t,%y,%m,%d s:'$d(%f) %f=0
+	i $$hr(%h) q -1 
+	i '%f,%h[",0" s %h=(%h-1)_",86400"
+	d ymd s:%t&('%f) x=x_%t
+	q x
+ymd
+	s %=(%h>21608)+(%h>94657)+%h-.1,%y=%\365.25+141,%=%#365.25\1
+	s %d=%+306#(%y#4=0+365)#153#61#31+1,%m=%-%d\29+1
+	s x=%y_"00"+%m_"00"+%d,%=$p(%h,",",2)
+	s %t=%#60/100+(%#3600\60)/100+(%\3600)/100 s:'%t %t=".0"
+	q
+hr(%v)
+	q (%v<2)!(%v>99999)
+hte(%h,%f)
+	q:$$hr(%h) %h
+	n y,%t,%r
+	s %f=$g(%f,1) s y=$$htfm(%h,0)
+t2  s %t="."_$e($p(y,".",2)_"000000",1,7)
+	d fmt q %r
+fmt 
+	n %g s %g=+%f
+	g f1:%g=1,f2:%g=2,f3:%g=3,f4:%g=4,f5:%g=5,f6:%g=6,f7:%g=7,f8:%g=8,f9:%g=9,f1
+	q
+f1  
+	s %r=$p($$m()," ",$s($e(y,4,5):$e(y,4,5)+2,1:0))_$s($e(y,4,5):" ",1:"")_$s($e(y,6,7):$e(y,6,7)_", ",1:"")_($e(y,1,3)+1700)
+tm
+	n %,%s q:%t'>0!(%f["d")
+	i %f'["p" s %r=%r_"@"_$e(%t,2,3)_":"_$e(%t,4,5)_$s(%f["m":"",$e(%t,6,7)!(%f["s"):":"_$e(%t,6,7),1:"")
+	i %f["p" d
+	. s %r=%r_" "_$s($e(%t,2,3)>12:$e(%t,2,3)-12,+$e(%t,2,3)=0:"12",1:+$e(%t,2,3))_":"_$e(%t,4,5)_$s(%f["m":"",$e(%t,6,7)!(%f["s"):":"_$e(%t,6,7),1:"")
+	. s %r=%r_$s($e(%t,2,7)<120000:" am",$e(%t,2,3)=24:" am",1:" pm")
+	. q
+	q
+m()      q "  Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec"
+	;
+f2  
+	s %r=$j(+$e(y,4,5),2)_"/"_$j(+$e(y,6,7),2)_"/"_$e(y,2,3)
+	s:%f["Z" %r=$tr(%r," ","0") s:%f'["F" %r=$tr(%r," ")
+	g tm
+f3 
+	s %r=$j(+$e(y,6,7),2)_"/"_$j(+$e(y,4,5),2)_"/"_$e(y,2,3)
+	s:%f["Z" %r=$tr(%r," ","0") s:%f'["F" %r=$tr(%r," ")
+	g tm
+f4 
+	s %r=$e(y,2,3)_"/"_$j(+$e(y,4,5),2)_"/"_$j(+$e(y,6,7),2)
+	s:%f["Z" %r=$tr(%r," ","0") s:%f'["F" %r=$tr(%r," ")
+	g tm
+f5  
+	s %r=$j(+$e(y,4,5),2)_"/"_$j(+$e(y,6,7),2)_"/"_($e(y,1,3)+1700)
+	s:%f["Z" %r=$tr(%r," ","0") s:%f'["F" %r=$tr(%r," ")
+	g tm
+f6  
+	s %r=$j(+$e(y,6,7),2)_"/"_$j(+$e(y,4,5),2)_"/"_($e(y,1,3)+1700)
+	s:%f["Z" %r=$tr(%r," ","0") s:%f'["F" %r=$tr(%r," ")
+	g tm
+f7  
+	s %r=($e(y,1,3)+1700)_"/"_$j(+$e(y,4,5),2)_"/"_$j(+$e(y,6,7),2)
+	s:%f["Z" %r=$tr(%r," ","0") s:%f'["F" %r=$tr(%r," ")
+	g tm
+f8  
+	s %r=$s($e(y,6,7):$e(y,6,7)_" ",1:"")_$p($$m()," ",$s($e(y,4,5):$e(y,4,5)+2,1:0))_$s($e(y,4,5):" ",1:"")_$e(y,2,3)
+	g tm
+f9  
+	s %r=$s($e(y,6,7):$e(y,6,7)_" ",1:"")_$p($$m()," ",$s($e(y,4,5):$e(y,4,5)+2,1:0))_$s($e(y,4,5):" ",1:"")_($e(y,1,3)+1700)
+	g tm
+parse10(body,parsed) 
+	n ll s ll=""
+	n l s l=1
+	k parsed
+	n i s i="" f  s i=$o(body(i)) q:'i  d
+	. n j f j=1:1:$l(body(i),$c(10)) d
+	. . s:(j=1&(l>1)) l=l-1
+	. . s parsed(l)=$tr($p(body(i),$c(10),j),$c(13))
+	. . s:(j=1&(l>1)) parsed(l)=ll_parsed(l) 
+	. . s ll=parsed(l)
+	. . s l=l+1
+	q
+addcrlf(result)
+	i $e($g(result))="^" d  quit
+	. n v,ql s v=result,ql=$ql(v) f  s v=$q(@v) q:v=""  q:$na(@v,ql)'=result  s @v=@v_$c(13,10)
+	e  d
+	. i $d(result)#2 s result=result_$c(13,10)
+	. n v s v=$na(result) f  s v=$q(@v) q:v=""  s @v=@v_$c(13,10)
+	quit
+	;
+unkargs(args,list)
+	n x,unknown
+	s unknown=0,list=","_list_","
+	s x="" f  s x=$o(args(x)) q:x=""  i list'[(","_x_",") d
+	. s unknown=1
+	. d seterror^adswsut(111,x)
+	q unknown
+	;
+encode64(x) ;
+	n rgz,rgz1,rgz2,rgz3,rgz4,rgz5,rgz6
+	s rgz=$$init64,rgz1=""
+	f rgz2=1:3:$l(x) d
+	.s rgz3=0,rgz6=""
+	.f rgz4=0:1:2 d
+	..s rgz5=$a(x,rgz2+rgz4),rgz3=rgz3*256+$s(rgz5<0:0,1:rgz5)
+	.f rgz4=1:1:4 s rgz6=$e(rgz,rgz3#64+2)_rgz6,rgz3=rgz3\64
+	.s rgz1=rgz1_rgz6
+	s rgz2=$l(x)#3
+	s:rgz2 rgz3=$l(rgz1),$e(rgz1,rgz3-2+rgz2,rgz3)=$e("==",rgz2,2)
+	q rgz1
+decode64(x) ;
+	n rgz,rgz1,rgz2,rgz3,rgz4,rgz5,rgz6
+	s rgz=$$init64,rgz1=""
+	f rgz2=1:4:$l(x) d
+	.s rgz3=0,rgz6=""
+	.f rgz4=0:1:3 d
+	..s rgz5=$f(rgz,$e(x,rgz2+rgz4))-3
+	..s rgz3=rgz3*64+$s(rgz5<0:0,1:rgz5)
+	.f rgz4=0:1:2 s rgz6=$c(rgz3#256)_rgz6,rgz3=rgz3\256
+	.s rgz1=rgz1_rgz6
+	q $e(rgz1,1,$l(rgz1)-$l(x,"=")+1)
+init64() q "=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+]]></Routine>
+</Export>
